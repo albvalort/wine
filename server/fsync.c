@@ -44,6 +44,7 @@
 #include "handle.h"
 #include "request.h"
 #include "fsync.h"
+#include "wine/darwin_futex.h"
 
 #include "pshpack4.h"
 #include "poppack.h"
@@ -59,6 +60,9 @@ int fsync_check_support(void)
 #ifdef __linux__
     syscall( __NR_futex_waitv, 0, 0, 0, 0, 0 );
     return getenv( "WINEFSYNC" ) && atoi(getenv( "WINEFSYNC" )) && errno != ENOSYS && errno != EPERM;
+#elif defined(__APPLE__)
+    /* futexes are emulated with ulocks, see wine/darwin_futex.h */
+    return getenv( "WINEFSYNC" ) && atoi(getenv( "WINEFSYNC" ));
 #else
     return 0;
 #endif
@@ -77,6 +81,12 @@ static uint32_t shm_idx_free_map_size; /* uint64_t word count */
 static uint32_t shm_idx_free_search_start_hint;
 
 #define BITS_IN_FREE_MAP_WORD (8 * sizeof(*shm_idx_free_map))
+
+#ifdef __APPLE__
+/* POSIX shm objects cannot be resized on macOS: size the section once. Pages are only
+ * allocated when touched. 64 MiB is 4M objects. */
+#define FSYNC_SHM_MAX_SIZE ((off_t)64 * 1024 * 1024)
+#endif
 
 static void shm_cleanup(void)
 {
@@ -108,8 +118,13 @@ void fsync_init(void)
     shm_addrs_size = 128;
 
     shm_size = FSYNC_SHM_PAGE_SIZE;
+#ifdef __APPLE__
+    if (ftruncate( shm_fd, FSYNC_SHM_MAX_SIZE ) == -1)
+        perror( "ftruncate" );
+#else
     if (ftruncate( shm_fd, shm_size ) == -1)
         perror( "ftruncate" );
+#endif
 
     is_fsync_initialized = 1;
 
@@ -185,7 +200,7 @@ static int alloc_shm_idx_from_word( unsigned int word_index )
 
 unsigned int fsync_alloc_shm( int low, int high )
 {
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     unsigned int i;
     int shm_idx;
     int *shm;
@@ -223,6 +238,17 @@ unsigned int fsync_alloc_shm( int low, int high )
     {
         /* Better expand the shm section. */
         shm_size += FSYNC_SHM_PAGE_SIZE;
+#ifdef __APPLE__
+        if (shm_size > FSYNC_SHM_MAX_SIZE)
+        {
+            fprintf( stderr, "fsync: shm section full (%jd bytes)\n", (intmax_t)FSYNC_SHM_MAX_SIZE );
+            /* give the index back without touching its (unmappable) entry */
+            shm_idx_free_map[shm_idx / BITS_IN_FREE_MAP_WORD] |= (uint64_t)1 << (shm_idx % BITS_IN_FREE_MAP_WORD);
+            shm_size -= FSYNC_SHM_PAGE_SIZE;
+            return 0;
+        }
+        continue;
+#endif
         if (ftruncate( shm_fd, shm_size ) == -1)
         {
             fprintf( stderr, "fsync: couldn't expand %s to size %jd: ",
@@ -312,6 +338,9 @@ static inline int futex_wake( int *addr, int val )
 {
 #ifdef __linux__
     return syscall( __NR_futex, addr, 1, val, NULL, 0, 0 );
+#elif defined(__APPLE__)
+    darwin_futex_wake( get_shm( 0 ), addr );
+    return 0;
 #else
     errno = ENOSYS;
     return -1;

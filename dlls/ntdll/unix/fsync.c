@@ -54,6 +54,7 @@
 
 #include "unix_private.h"
 #include "fsync.h"
+#include "wine/darwin_futex.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(fsync);
 
@@ -138,10 +139,52 @@ static void simulate_sched_quantum(void)
     usleep(0);
 }
 
+#ifdef __APPLE__
+static void *get_shm( unsigned int idx );
+
+int darwin_futex_spin_count = DARWIN_FUTEX_DEFAULT_SPIN;
+
+/* relative timeout until an absolute end time; 0 means infinite */
+static uint64_t darwin_timeout_ns( const struct timespec64 *end, clockid_t clock_id )
+{
+    struct timespec now;
+    long long ns;
+
+    if (!end) return 0;
+    clock_gettime( clock_id, &now );
+    ns = (end->tv_sec - now.tv_sec) * 1000000000LL + (end->tv_nsec - now.tv_nsec);
+    return ns > 0 ? (uint64_t)ns : DARWIN_FUTEX_EXPIRED;
+}
+#endif
+
 static inline int futex_wait_multiple( const struct futex_waitv *futexes,
         int count, const struct timespec64 *end, clockid_t clock_id )
 {
-#ifdef __linux__
+#ifdef __APPLE__
+    int *addrs[MAXIMUM_WAIT_OBJECTS + 1];
+    int vals[MAXIMUM_WAIT_OBJECTS + 1];
+    int i, ret;
+
+    if (!count)
+    {
+        errno = 0; /* availability probe from fsync_init() */
+        return 0;
+    }
+    if (count > ARRAY_SIZE(addrs))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    for (i = 0; i < count; i++)
+    {
+        addrs[i] = u64_to_ptr( futexes[i].uaddr );
+        vals[i] = (int)futexes[i].val;
+    }
+    ret = darwin_futex_wait_multiple( get_shm( 0 ), addrs, vals, count, darwin_timeout_ns( end, clock_id ) );
+    if (ret >= 0) return 0;
+    errno = -ret;
+    return -1;
+#elif defined(__linux__)
    if (end)
         return syscall( __NR_futex_waitv, futexes, count, 0, end, clock_id );
    else
@@ -156,6 +199,9 @@ static inline int futex_wake( int *addr, int val )
 {
 #ifdef __linux__
     return syscall( __NR_futex, addr, 1, val, NULL, 0, 0 );
+#elif defined(__APPLE__)
+    darwin_futex_wake( get_shm( 0 ), addr );
+    return 0;
 #else
     errno = ENOSYS;
     return -1;
@@ -466,6 +512,12 @@ void fsync_init( DWORD pid )
 
 
     fsync_enabled = 1;
+#ifdef __APPLE__
+    {
+        const char *spin = getenv( "WINE_MSYNC_SPIN" );
+        if (spin) darwin_futex_spin_count = atoi( spin );
+    }
+#endif
     futex_wait_multiple( NULL, 0, NULL, 0 );
     if (errno == ENOSYS || errno == EPERM)
     {

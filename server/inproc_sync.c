@@ -40,12 +40,27 @@
 #include "ntsync_tmp.h"
 #endif
 
-#ifdef NTSYNC_IOC_EVENT_READ
+#if !defined(NTSYNC_IOC_EVENT_READ) && defined(__APPLE__)
+/* No ntsync on macOS: inproc syncs are always fsync objects (futexes emulated with ulocks, see
+ * wine/darwin_futex.h). These definitions only let the ntsync branches compile; they never run. */
+#include <errno.h>
+typedef unsigned int __u32;
+struct ntsync_event_args { __u32 signaled; __u32 manual; };
+struct ntsync_mutex_args { __u32 owner; __u32 count; };
+struct ntsync_sem_args { __u32 count; __u32 max; };
+#define INPROC_SYNC_FSYNC_ONLY
+#endif
+
+#if defined(NTSYNC_IOC_EVENT_READ) || defined(INPROC_SYNC_FSYNC_ONLY)
 
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#ifdef INPROC_SYNC_FSYNC_ONLY
+#define ioctl( fd, request, arg ) (errno = ENOSYS, -1)
+#endif
 
 int get_inproc_device_fd(void)
 {
@@ -299,7 +314,7 @@ static int get_obj_inproc_sync( struct object *obj, int *type )
     return fd;
 }
 
-#else /* NTSYNC_IOC_EVENT_READ */
+#else /* NTSYNC_IOC_EVENT_READ || INPROC_SYNC_FSYNC_ONLY */
 
 int get_inproc_device_fd(void)
 {
@@ -348,7 +363,7 @@ static int get_obj_inproc_sync( struct object *obj, int *type )
     return -1;
 }
 
-#endif /* NTSYNC_IOC_EVENT_READ */
+#endif /* NTSYNC_IOC_EVENT_READ || INPROC_SYNC_FSYNC_ONLY */
 
 DECL_HANDLER(get_inproc_sync_fd)
 {
