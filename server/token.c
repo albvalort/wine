@@ -25,6 +25,9 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
+#ifdef __APPLE__
+#include <uuid/uuid.h>
+#endif
 #include <stdlib.h>
 #include <stdarg.h>
 #include <sys/types.h>
@@ -219,6 +222,25 @@ void init_user_sid(void)
     uint64_t id;
     size_t n;
     FILE *f;
+
+#ifdef __APPLE__
+    /* macOS has no /etc/machine-id; the host UUID serves the same purpose. */
+    {
+        static const struct timespec wait = { 0, 0 };
+        uuid_t uuid;
+
+        if (gethostuuid( uuid, &wait ))
+        {
+            fprintf( stderr, "Failed to get host UUID, error %s.\n", strerror( errno ));
+            return;
+        }
+        memcpy( &id, uuid, sizeof(id) );
+        local_user_sid.sub_auth[1] = id >> 32;
+        local_user_sid.sub_auth[2] = id & 0xffffffff;
+        local_user_sid.sub_auth[3] = getuid();
+        return;
+    }
+#endif
 
     f = fopen( "/etc/machine-id", "r" );
     if (!f)
