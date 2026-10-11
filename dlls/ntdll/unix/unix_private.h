@@ -670,6 +670,16 @@ extern void *libd3dshared_load_addr, *libd3dshared_code_end;
 #define GPT_IMPORT(name) name
 #endif
 
+/* The Windows x64 ABI leaves the upper bits of BOOLEAN arguments undefined (PE code passes
+ * e.g. "movb $0,0x20(%rsp)"), but Apple clang assumes the caller zero-extended them and tests
+ * the full 32-bit register. Syscalls must therefore truncate BOOLEAN arguments themselves. */
+#if defined(__APPLE__) && defined(__x86_64__)
+#define SYSCALL_BOOLEAN_ARG(x) \
+    do { unsigned int __v; __asm__( "movzbl %b1,%0" : "=r" (__v) : "q" (x) ); (x) = __v; } while (0)
+#else
+#define SYSCALL_BOOLEAN_ARG(x) do { } while (0)
+#endif
+
 /* LDT definitions */
 
 #if defined(__i386__) || defined(__x86_64__)

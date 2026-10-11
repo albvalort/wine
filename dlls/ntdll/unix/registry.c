@@ -872,6 +872,8 @@ NTSTATUS WINAPI NtNotifyChangeMultipleKeys( HANDLE key, ULONG count, OBJECT_ATTR
                                             IO_STATUS_BLOCK *io, ULONG filter, BOOLEAN subtree,
                                             void *buffer, ULONG length, BOOLEAN async )
 {
+    SYSCALL_BOOLEAN_ARG( subtree );
+    SYSCALL_BOOLEAN_ARG( async );
     unsigned int ret;
 
     TRACE( "(%p,%u,%p,%p,%p,%p,%p,0x%08x, 0x%08x,%p,0x%08x,0x%08x)\n",
@@ -915,6 +917,8 @@ NTSTATUS WINAPI NtNotifyChangeKey( HANDLE key, HANDLE event, PIO_APC_ROUTINE apc
                                    IO_STATUS_BLOCK *io, ULONG filter, BOOLEAN subtree,
                                    void *buffer, ULONG length, BOOLEAN async )
 {
+    SYSCALL_BOOLEAN_ARG( subtree );
+    SYSCALL_BOOLEAN_ARG( async );
     return NtNotifyChangeMultipleKeys( key, 0, NULL, event, apc, apc_context,
                                        io, filter, subtree, buffer, length, async );
 }

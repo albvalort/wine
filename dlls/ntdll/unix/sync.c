@@ -1149,6 +1149,7 @@ GPT_ABI_WRAPPER( NtReleaseSemaphore );
 NTSTATUS WINAPI GPT_IMPORT(NtCreateEvent)( HANDLE *handle, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr,
                                EVENT_TYPE type, BOOLEAN state )
 {
+    SYSCALL_BOOLEAN_ARG( state );
     unsigned int ret;
     data_size_t len;
     struct object_attributes *objattr;
@@ -1401,6 +1402,7 @@ NTSTATUS WINAPI NtQueryEvent( HANDLE handle, EVENT_INFORMATION_CLASS class,
 NTSTATUS WINAPI NtCreateMutant( HANDLE *handle, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr,
                                 BOOLEAN owned )
 {
+    SYSCALL_BOOLEAN_ARG( owned );
     unsigned int ret;
     data_size_t len;
     struct object_attributes *objattr;
@@ -1942,6 +1944,7 @@ static NTSTATUS get_image_machine( HANDLE handle, USHORT *machine )
 NTSTATUS WINAPI NtWaitForDebugEvent( HANDLE handle, BOOLEAN alertable, LARGE_INTEGER *timeout,
                                      DBGUI_WAIT_STATE_CHANGE *state )
 {
+    SYSCALL_BOOLEAN_ARG( alertable );
     union debug_event_data data;
     unsigned int ret;
     BOOL wait = TRUE;
@@ -2047,6 +2050,8 @@ NTSTATUS WINAPI NtQueryDirectoryObject( HANDLE handle, DIRECTORY_BASIC_INFORMATI
                                         ULONG size, BOOLEAN single_entry, BOOLEAN restart,
                                         ULONG *context, ULONG *ret_size )
 {
+    SYSCALL_BOOLEAN_ARG( single_entry );
+    SYSCALL_BOOLEAN_ARG( restart );
     unsigned int status, i, count, total_len, pos, used_size, used_count, strpool_head;
     ULONG index = restart ? 0 : *context;
     struct directory_entry *entries;
@@ -2326,6 +2331,7 @@ NTSTATUS WINAPI NtOpenTimer( HANDLE *handle, ACCESS_MASK access, const OBJECT_AT
 NTSTATUS WINAPI NtSetTimer( HANDLE handle, const LARGE_INTEGER *when, PTIMER_APC_ROUTINE callback,
                             void *arg, BOOLEAN resume, ULONG period, BOOLEAN *state )
 {
+    SYSCALL_BOOLEAN_ARG( resume );
     unsigned int ret = STATUS_SUCCESS;
 
     TRACE( "(%p,%p,%p,%p,%08x,0x%08x,%p)\n", handle, when, callback, arg, resume, period, state );
@@ -2423,6 +2429,7 @@ NTSTATUS WINAPI NtQueryTimer( HANDLE handle, TIMER_INFORMATION_CLASS class,
 NTSTATUS WINAPI NtWaitForMultipleObjects( DWORD count, const HANDLE *handles, WAIT_TYPE type,
                                           BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
+    SYSCALL_BOOLEAN_ARG( alertable );
     union select_op select_op;
     UINT i, flags = SELECT_INTERRUPTIBLE;
     unsigned int ret;
@@ -2463,6 +2470,7 @@ NTSTATUS WINAPI NtWaitForMultipleObjects( DWORD count, const HANDLE *handles, WA
  */
 NTSTATUS WINAPI NtWaitForSingleObject( HANDLE handle, BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
+    SYSCALL_BOOLEAN_ARG( alertable );
     union select_op select_op;
     UINT flags = SELECT_INTERRUPTIBLE;
     unsigned int ret;
@@ -2490,6 +2498,7 @@ NTSTATUS WINAPI NtWaitForSingleObject( HANDLE handle, BOOLEAN alertable, const L
 NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
                                                 BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
+    SYSCALL_BOOLEAN_ARG( alertable );
     union select_op select_op;
     UINT flags = SELECT_INTERRUPTIBLE;
     NTSTATUS ret;
@@ -2538,6 +2547,7 @@ NTSTATUS WINAPI NtYieldExecution(void)
  */
 NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
+    SYSCALL_BOOLEAN_ARG( alertable );
     unsigned int status = STATUS_SUCCESS;
 
     /* if alertable, we need to query the server */
@@ -2674,6 +2684,7 @@ NTSTATUS WINAPI NtQueryTimerResolution( ULONG *min_res, ULONG *max_res, ULONG *c
  */
 NTSTATUS WINAPI NtSetTimerResolution( ULONG res, BOOLEAN set, ULONG *current_res )
 {
+    SYSCALL_BOOLEAN_ARG( set );
     static BOOL has_request = FALSE;
 
     TRACE( "(%u,%u,%p), semi-stub!\n", res, set, current_res );
@@ -2801,6 +2812,7 @@ NTSTATUS WINAPI NtOpenKeyedEvent( HANDLE *handle, ACCESS_MASK access, const OBJE
 NTSTATUS WINAPI NtWaitForKeyedEvent( HANDLE handle, const void *key,
                                      BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
+    SYSCALL_BOOLEAN_ARG( alertable );
     union select_op select_op;
     UINT flags = SELECT_INTERRUPTIBLE;
 
@@ -2822,6 +2834,7 @@ NTSTATUS WINAPI NtWaitForKeyedEvent( HANDLE handle, const void *key,
 NTSTATUS WINAPI NtReleaseKeyedEvent( HANDLE handle, const void *key,
                                      BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
+    SYSCALL_BOOLEAN_ARG( alertable );
     union select_op select_op;
     UINT flags = SELECT_INTERRUPTIBLE;
 
@@ -3003,6 +3016,7 @@ NTSTATUS WINAPI NtRemoveIoCompletion( HANDLE handle, ULONG_PTR *key, ULONG_PTR *
 NTSTATUS WINAPI NtRemoveIoCompletionEx( HANDLE handle, FILE_IO_COMPLETION_INFORMATION *info, ULONG count,
                                         ULONG *written, LARGE_INTEGER *timeout, BOOLEAN alertable )
 {
+    SYSCALL_BOOLEAN_ARG( alertable );
     HANDLE wait_handle = NULL;
     unsigned int status;
     ULONG i = 0;
@@ -3253,6 +3267,7 @@ NTSTATUS WINAPI NtListenPort( HANDLE handle, LPC_MESSAGE *msg )
 NTSTATUS WINAPI NtAcceptConnectPort( HANDLE *handle, ULONG id, LPC_MESSAGE *msg, BOOLEAN accept,
                                      LPC_SECTION_WRITE *write, LPC_SECTION_READ *read )
 {
+    SYSCALL_BOOLEAN_ARG( accept );
     FIXME("(%p,%u,%p,%d,%p,%p),stub!\n", handle, id, msg, accept, write, read );
     return STATUS_NOT_IMPLEMENTED;
 }
@@ -3836,6 +3851,7 @@ NTSTATUS WINAPI NtCreateTransaction( HANDLE *handle, ACCESS_MASK mask, OBJECT_AT
  */
 NTSTATUS WINAPI NtCommitTransaction( HANDLE transaction, BOOLEAN wait )
 {
+    SYSCALL_BOOLEAN_ARG( wait );
     FIXME( "%p, %d stub.\n", transaction, wait );
 
     return STATUS_SUCCESS;
@@ -3846,6 +3862,7 @@ NTSTATUS WINAPI NtCommitTransaction( HANDLE transaction, BOOLEAN wait )
  */
 NTSTATUS WINAPI NtRollbackTransaction( HANDLE transaction, BOOLEAN wait )
 {
+    SYSCALL_BOOLEAN_ARG( wait );
     FIXME( "%p, %d stub.\n", transaction, wait );
 
     return STATUS_ACCESS_VIOLATION;
