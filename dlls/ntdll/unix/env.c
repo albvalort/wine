@@ -70,6 +70,7 @@ WOW_PEB *wow_peb = NULL;
 USHORT *uctable = NULL, *lctable = NULL;
 SIZE_T startup_info_size = 0;
 BOOL is_prefix_bootstrap = FALSE;
+BOOL wow64_using_32bit_prefix = FALSE;  /* from CrossOver; set by server.c for 32-bit-only prefixes */
 
 static const WCHAR bootstrapW[] = {'W','I','N','E','B','O','O','T','S','T','R','A','P','M','O','D','E'};
 

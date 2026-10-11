@@ -108,6 +108,13 @@ struct compat_wine_nt_to_unix_file_name_params
     unsigned int disposition;
 };
 
+/* D3DMetal (macOS): native PE modules are reported to the unix side (from CrossOver, CW HACK 22434) */
+struct pe_module_loaded_params
+{
+    void *start;
+    void *end;
+};
+
 enum ntdll_unix_funcs
 {
     unix_load_so_dll,
@@ -124,6 +131,9 @@ enum ntdll_unix_funcs
     unix_steamclient_setup_trampolines,
     unix_debugstr_pc,
     unix_compat_wine_nt_to_unix_file_name,
+#if defined(__x86_64__)
+    unix_pe_module_loaded,
+#endif
 };
 
 extern unixlib_handle_t __wine_unixlib_handle;

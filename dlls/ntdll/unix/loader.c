@@ -115,6 +115,8 @@ void *pRtlUserThreadStart = NULL;
 void *p__wine_ctrl_routine = NULL;
 SYSTEM_DLL_INIT_BLOCK *pLdrSystemDllInitBlock = NULL;
 
+extern typeof(NtReadFile) __wine_rpc_NtReadFile;
+
 static void stub_syscall( const char *name )
 {
     CONTEXT context = { .ContextFlags = CONTEXT_FULL };
@@ -155,6 +157,7 @@ static BYTE syscall_args[ARRAY_SIZE(syscalls)] =
 #undef SYSCALL_ENTRY
 };
 
+__attribute__((visibility("default")))  /* CW Hack 24067 */
 SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4] =
 {
     { (ULONG_PTR *)syscalls, NULL, ARRAY_SIZE(syscalls), syscall_args }
@@ -361,12 +364,38 @@ static WORD get_alt_machine( WORD machine )
     }
 }
 
+/* CW Hack 24067 */
+__attribute__((visibility("default")))
+void prepend_dll_path(const char *path)
+{
+    unsigned int i, count;
+    const char **new_dll_paths;
+    size_t path_len = strlen(path);
+
+    for (count = 0; dll_paths[count]; count++)
+        ;
+
+    new_dll_paths = calloc(count + 2, sizeof(char *));
+    new_dll_paths[0] = path;
+    for (i = 0; dll_paths[i]; i++)
+        new_dll_paths[i + 1] = dll_paths[i];
+
+    free(dll_paths);
+    dll_paths = new_dll_paths;
+    if (path_len > dll_path_maxlen)
+        dll_path_maxlen = path_len;
+}
+
 static void set_dll_path(void)
 {
     char *p, *path = getenv( "WINEDLLPATH" ), *be_runtime = getenv( "PROTON_BATTLEYE_RUNTIME" ), *eac_runtime = getenv( "PROTON_EAC_RUNTIME" );
+    /* searched before Wine's own dll dir, e.g. to use an external implementation of builtin
+     * modules (D3DMetal on macOS) without touching the Wine install */
+    char *prepend = getenv( "WINEDLLPATH_PREPEND" );
     int i, count = 0;
 
     if (path) for (p = path, count = 1; *p; p++) if (*p == ':') count++;
+    if (prepend) for (p = prepend, count++; *p; p++) if (*p == ':') count++;
 
     if (be_runtime)
         count += 2;
@@ -376,6 +405,13 @@ static void set_dll_path(void)
 
     dll_paths = malloc( (count + 2) * sizeof(*dll_paths) );
     count = 0;
+
+    if (prepend)
+    {
+        prepend = strdup( prepend );
+        for (p = strtok( prepend, ":" ); p; p = strtok( NULL, ":" )) dll_paths[count++] = strdup( p );
+        free( prepend );
+    }
 
     if (!build_dir) dll_paths[count++] = dll_dir;
 
@@ -546,7 +582,6 @@ char *get_alternate_wineloader( WORD machine )
     return ret;
 }
 
-
 static void preloader_exec( char **argv, WORD machine )
 {
 #ifdef HAVE_WINE_PRELOADER
@@ -560,6 +595,7 @@ static void preloader_exec( char **argv, WORD machine )
 #ifdef __APPLE__
     {
         posix_spawnattr_t attr;
+
         posix_spawnattr_init( &attr );
         posix_spawnattr_setflags( &attr, POSIX_SPAWN_SETEXEC | _POSIX_SPAWN_DISABLE_ASLR );
         posix_spawn( NULL, argv[0], NULL, &attr, argv, *_NSGetEnviron() );
@@ -569,6 +605,8 @@ static void preloader_exec( char **argv, WORD machine )
     execv( argv[0], argv );
     free( argv[0] );
 #endif
+
+
     execv( argv[1], argv + 1 );
 }
 
@@ -1087,6 +1125,7 @@ static NTSTATUS load_so_dll( void *args )
     return status;
 }
 
+
 /* check if the library is the correct architecture */
 /* only returns false for a valid library of the wrong arch */
 static int check_library_arch( int fd )
@@ -1413,6 +1452,80 @@ const char * wine_debuginfostr_pc( void *pc )
     return __wine_dbg_strdup( buffer );
 }
 
+/* CW HACK 22434 */
+#if defined(__APPLE__) && defined(__x86_64__)
+#include <sys/utsname.h>
+static pthread_once_t non_native_init_once = PTHREAD_ONCE_INIT;
+static void *non_native_support_lib;
+void *libd3dshared_load_addr = NULL, *libd3dshared_code_end = NULL;
+static void (*register_non_native_code_region)( void*, void* );
+static bool (*supports_non_native_code_regions)(void);
+
+/* Non-native code region support requires Sonoma or later, don't bother loading on earlier OSes */
+static BOOL sonoma_or_later(void)
+{
+    int result;
+    struct utsname name;
+    unsigned major, minor;
+
+    result = (uname( &name ) == 0 &&
+              sscanf( name.release, "%u.%u", &major, &minor ) == 2 &&
+              major >= 23 /* macOS 14 Sonoma */);
+
+    return (result == 1) ? TRUE : FALSE;
+}
+
+static void init_non_native_support(void)
+{
+    char *libd3dshared_path = getenv( "CX_APPLEGPTK_LIBD3DSHARED_PATH" );
+
+    register_non_native_code_region = NULL;
+    supports_non_native_code_regions = NULL;
+
+    if (!libd3dshared_path || !sonoma_or_later())
+        return;
+
+    non_native_support_lib = dlopen( libd3dshared_path, RTLD_LOCAL );
+    if (non_native_support_lib)
+    {
+        Dl_info dli;
+
+        register_non_native_code_region = dlsym( non_native_support_lib, "register_non_native_code_region" );
+        supports_non_native_code_regions = dlsym( non_native_support_lib, "supports_non_native_code_regions" );
+
+        if (dladdr( supports_non_native_code_regions, &dli ))
+        {
+            unsigned long code_size;
+
+            libd3dshared_load_addr = dli.dli_fbase;
+            getsegmentdata(dli.dli_fbase, "__TEXT", &code_size);
+            libd3dshared_code_end = (char *)libd3dshared_load_addr + code_size;
+        }
+
+        TRACE( "Loaded libd3dshared.dylib, does%s support non-native code regions\n",
+                supports_non_native_code_regions ? (supports_non_native_code_regions() ? "" : " not") : " not" );
+    }
+    else
+        TRACE( "Loading libd3dshared.dylib failed: %s\n", dlerror() );
+}
+
+static NTSTATUS pe_module_loaded( void *args )
+{
+    struct pe_module_loaded_params *params = args;
+
+    pthread_once( &non_native_init_once, &init_non_native_support );
+    if ((supports_non_native_code_regions && supports_non_native_code_regions()))
+    {
+        TRACE( "Marking non_native_code_region: %p-%p\n", params->start, params->end );
+        register_non_native_code_region( params->start, params->end );
+    }
+    return STATUS_SUCCESS;
+}
+#elif defined(__x86_64__)
+static NTSTATUS pe_module_loaded( void *args ) { return STATUS_NOT_IMPLEMENTED; }
+#endif
+
+
 static const unixlib_entry_t unix_call_funcs[] =
 {
     load_so_dll,
@@ -1429,13 +1542,21 @@ static const unixlib_entry_t unix_call_funcs[] =
     steamclient_setup_trampolines,
     debugstr_pc,
     unixcall_compat_wine_nt_to_unix_file_name,
+#if defined(__x86_64__)
+    pe_module_loaded,
+#endif
 };
+
+
 
 
 #ifdef _WIN64
 
 static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
 static NTSTATUS wow64_unwind_builtin_dll( void *args ) { return STATUS_UNSUCCESSFUL; }
+#if defined(__x86_64__)
+static NTSTATUS wow64_pe_module_loaded( void *args ) { return STATUS_NOT_IMPLEMENTED; }
+#endif
 
 static NTSTATUS wow64___wine_get_unix_env( void *args )
 {
@@ -1528,6 +1649,9 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
     wow64_steamclient_setup_trampolines,
     wow64_debugstr_pc,
     wow64_compat_wine_nt_to_unix_file_name,
+#if defined(__x86_64__)
+    wow64_pe_module_loaded,
+#endif
 };
 
 #endif  /* _WIN64 */
@@ -1632,6 +1756,15 @@ static NTSTATUS find_builtin_dll( UNICODE_STRING *nt_name, ANSI_STRING *exp_name
     if (!exp_name || !exp_name->Length)
     {
         len = nt_name->Length / sizeof(WCHAR);
+
+        /* CX HACK 20810: in wow64/32-bit-bottle mode, use 32-bit builtin EXEs */
+        if (wow64_using_32bit_prefix &&
+            len > 4 &&
+            (nt_name->Buffer[len-3] == 'e' &&
+             nt_name->Buffer[len-2] == 'x' &&
+             nt_name->Buffer[len-1] == 'e'))
+            pe_dir = get_pe_dir( IMAGE_FILE_MACHINE_I386 );
+
         for (i = 0; i < len; i++)
             if (nt_name->Buffer[i] == '/' || nt_name->Buffer[i] == '\\') namepos = i + 1;
         len -= namepos;
@@ -1726,7 +1859,7 @@ static NTSTATUS find_builtin_dll( UNICODE_STRING *nt_name, ANSI_STRING *exp_name
 
     if (found_image) status = STATUS_NOT_SUPPORTED;
     WARN( "cannot find builtin library for %s\n", debugstr_us(nt_name) );
-done:
+ done:
     if (NT_SUCCESS(status) && ext)
     {
         strcpy( ext, ".so" );
@@ -1798,7 +1931,7 @@ static const WCHAR *get_machine_wow64_dir( WORD machine )
     static const WCHAR syswow64[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','w','o','w','6','4','\\',0};
     static const WCHAR sysarm32[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','a','r','m','3','2','\\',0};
 
-    if (machine == native_machine) machine = IMAGE_FILE_MACHINE_TARGET_HOST;
+    if (machine == native_machine || wow64_using_32bit_prefix) machine = IMAGE_FILE_MACHINE_TARGET_HOST;
 
     switch (machine)
     {
@@ -2433,6 +2566,47 @@ static void hacks_init(void)
     if (main_argc > 1 && strstr(main_argv[1], "edCefRenderProcess.exe"))
         process_termination_delay = TRUE;
 }
+#if defined(__APPLE__) && defined(__x86_64__)
+static __thread struct tm localtime_tls;
+struct tm *my_localtime(const time_t *timep)
+{
+    return localtime_r(timep, &localtime_tls);
+}
+
+static void hook(void *to_hook, const void *replace)
+{
+    size_t offset;
+
+    struct hooked_function
+    {
+        char jmp[8];
+        const void *dst;
+    } *hooked_function = to_hook;
+    ULONG_PTR intval = (UINT_PTR)to_hook;
+
+    intval -= (intval % 4096);
+    mprotect((void *)intval, 0x2000, PROT_EXEC | PROT_READ | PROT_WRITE);
+
+    /* The offset is from the end of the jmp instruction (6 bytes) to the start of the destination. */
+    offset = offsetof(struct hooked_function, dst) - offsetof(struct hooked_function, jmp) - 0x6;
+
+    /* jmp *(rip + offset) */
+    hooked_function->jmp[0] = 0xff;
+    hooked_function->jmp[1] = 0x25;
+    hooked_function->jmp[2] = offset;
+    hooked_function->jmp[3] = 0x00;
+    hooked_function->jmp[4] = 0x00;
+    hooked_function->jmp[5] = 0x00;
+    /* Filler */
+    hooked_function->jmp[6] = 0xcc;
+    hooked_function->jmp[7] = 0xcc;
+    /* Dest address absolute */
+    hooked_function->dst = replace;
+
+    //size = sizeof(*hooked_function);
+    //NtProtectVirtualMemory(proc, (void **)hooked_function, &size, old_protect, &old_protect);
+}
+#endif
 
 /***********************************************************************
  *           start_main_thread
@@ -2466,6 +2640,11 @@ static void start_main_thread(void)
     load_apiset_dll();
 #ifdef M_PERTURB
     mallopt( M_PERTURB, 0 );
+#endif
+#if defined(__APPLE__) && defined(__x86_64__)
+    /* This is necessary because we poke PEB into pthread TLS at offset 0x60. It is normally in use by
+     * localtime(), which is called a lot by system libraries. Make localtime() go away. */
+    hook(localtime, my_localtime);
 #endif
     server_init_process_done();
 }

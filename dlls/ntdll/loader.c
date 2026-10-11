@@ -1721,6 +1721,10 @@ static NTSTATUS alloc_thread_tls(void)
     }
     ++tls_thread_count;
     NtCurrentTeb()->ThreadLocalStoragePointer = pointers;
+#ifdef __x86_64__  /* macOS: mirror into the pthread TSD that %gs points to (as in virtual.c) */
+    if (NtCurrentTeb()->Instrumentation[0])
+        ((TEB *)NtCurrentTeb()->Instrumentation[0])->ThreadLocalStoragePointer = pointers;
+#endif
     return STATUS_SUCCESS;
 }
 
@@ -2462,6 +2466,15 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name, 
 
     TRACE_(loaddll)( "Loaded %s at %p: %s\n", debugstr_w(wm->ldr.FullDllName.Buffer), *module,
                      is_builtin ? "builtin" : "native" );
+
+#if defined(__x86_64__)
+    /* D3DMetal needs to know where native PE modules live (from CrossOver, CW HACK 22434) */
+    if (!is_builtin)
+    {
+        struct pe_module_loaded_params params = { *module, (void *)((BYTE *)*module + map_size) };
+        WINE_UNIX_CALL( unix_pe_module_loaded, &params );
+    }
+#endif
 
     wm->ldr.LoadCount = 1;
     *pwm = wm;
@@ -4176,6 +4189,10 @@ void WINAPI LdrShutdownThread(void)
     if ((pointers = NtCurrentTeb()->ThreadLocalStoragePointer))
     {
         NtCurrentTeb()->ThreadLocalStoragePointer = NULL;
+#ifdef __x86_64__  /* macOS: mirror into the pthread TSD that %gs points to (as in virtual.c) */
+        if (NtCurrentTeb()->Instrumentation[0])
+            ((TEB *)NtCurrentTeb()->Instrumentation[0])->ThreadLocalStoragePointer = NULL;
+#endif
         --tls_thread_count;
         for (i = 0; i < tls_module_count; i++) free_tls_memory( pointers[i] );
         free_tls_memory( pointers );
