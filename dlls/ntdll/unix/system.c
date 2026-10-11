@@ -1823,6 +1823,19 @@ static NTSTATUS create_logical_proc_info(void)
 }
 #endif
 
+#ifndef linux
+/* sysfs is Linux-only: without it the CPU override cannot prefer performance cores or
+ * group SMT siblings, but it still works with the plain CPU order. */
+static BOOL sysfs_parse_bitmap(const char *filename, ULONG_PTR *mask)
+{
+    return FALSE;
+}
+
+static void fill_performance_core_info(void)
+{
+}
+#endif
+
 #ifdef linux
 
 static double tsc_from_jiffies[MAXIMUM_PROCESSORS];
