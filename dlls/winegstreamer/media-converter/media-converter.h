@@ -26,6 +26,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#include <pthread.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
