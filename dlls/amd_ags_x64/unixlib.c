@@ -31,9 +31,12 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#if defined(HAVE_XF86DRM_H) && defined(HAVE_AMDGPU_DRM_H)
+#define HAVE_AMDGPU_INFO
 #include <xf86drm.h>
 #include <amdgpu_drm.h>
 #include <amdgpu.h>
+#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -45,6 +48,8 @@
 #include "unixlib.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(amd_ags);
+
+#ifdef HAVE_AMDGPU_INFO
 
 #define MAX_DEVICE_COUNT 64
 
@@ -275,6 +280,21 @@ static NTSTATUS get_device_info( void *args )
     TRACE("Device %04x not found.\n", params->device_id);
     return STATUS_NOT_FOUND;
 }
+
+#else  /* HAVE_AMDGPU_INFO */
+
+/* No libdrm/amdgpu (e.g. macOS): report that GPU details are unavailable. */
+static NTSTATUS init( void *args )
+{
+    return STATUS_NOT_SUPPORTED;
+}
+
+static NTSTATUS get_device_info( void *args )
+{
+    return STATUS_NOT_SUPPORTED;
+}
+
+#endif /* HAVE_AMDGPU_INFO */
 
 const unixlib_entry_t __wine_unix_call_funcs[] =
 {
