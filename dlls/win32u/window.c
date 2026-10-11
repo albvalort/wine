@@ -338,6 +338,16 @@ void client_surface_add_ref( struct client_surface *surface )
     TRACE( "%s increasing refcount to %u\n", debugstr_client_surface( surface ), ref );
 }
 
+/***********************************************************************
+ *           client_surface_attach
+ *
+ * Driver-side entry point for surfaces that win32u does not create itself.
+ */
+void client_surface_attach( HWND hwnd, struct client_surface *surface )
+{
+    add_window_client_surface( hwnd, surface );
+}
+
 void client_surface_release( struct client_surface *surface )
 {
     ULONG ref = InterlockedDecrement( &surface->ref );

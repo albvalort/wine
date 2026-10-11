@@ -272,6 +272,8 @@ W32KAPI void *client_surface_create( UINT size, const struct client_surface_func
 W32KAPI void client_surface_add_ref( struct client_surface *surface );
 W32KAPI void client_surface_release( struct client_surface *surface );
 W32KAPI void client_surface_present( struct client_surface *surface );
+/* track the surface with its window so it follows client area changes (D3DMetal on macOS) */
+W32KAPI void client_surface_attach( HWND hwnd, struct client_surface *surface );
 W32KAPI void client_surface_update( struct client_surface *surface );
 W32KAPI void detach_client_surfaces( HWND hwnd );
 
