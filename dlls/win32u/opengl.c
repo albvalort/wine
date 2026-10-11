@@ -1600,6 +1600,31 @@ static void init_egl_platforms( struct opengl_funcs *funcs, const struct opengl_
 
 #else /* SONAME_LIBEGL */
 
+/* The framebuffer surface (fshack) is implemented on top of EGL. Without EGL (e.g. macOS) it is
+ * never needed and never created, so these stubs only satisfy the generic code paths below. */
+struct framebuffer_surface
+{
+    struct opengl_drawable base;
+    struct opengl_drawable *target;
+};
+
+static const struct opengl_drawable_funcs framebuffer_surface_funcs;
+
+static struct framebuffer_surface *framebuffer_from_opengl_drawable( struct opengl_drawable *base )
+{
+    return CONTAINING_RECORD( base, struct framebuffer_surface, base );
+}
+
+static BOOL needs_framebuffer_surface( HWND hwnd )
+{
+    return FALSE;
+}
+
+static struct opengl_drawable *framebuffer_surface_create( int format, struct client_surface *client, struct opengl_drawable *target )
+{
+    return NULL;
+}
+
 static BOOL egl_init( const struct opengl_driver_funcs **driver_funcs )
 {
     WARN( "EGL support not compiled in!\n" );
