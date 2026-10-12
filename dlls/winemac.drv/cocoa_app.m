@@ -1475,6 +1475,16 @@ static NSString* WineLocalizedString(unsigned int stringID)
             macdrv_event* event;
             BOOL absolute;
 
+            /* Raw input reports device motion, so accumulate the deltas of every
+             * move, including those discarded below after a warp: games that
+             * recenter the cursor on each WM_INPUT (Godot 3) would otherwise lose
+             * most of the motion (see macdrv_mouse_moved()). */
+            {
+                double scale = retina_on ? 2 : 1;
+                rawMoveDeltaX += [anEvent deltaX] * scale;
+                rawMoveDeltaY += [anEvent deltaY] * scale;
+            }
+
             // If we recently warped the cursor (other than in our cursor-clipping
             // event tap), discard mouse move events until we see an event which is
             // later than that time.
@@ -1537,14 +1547,6 @@ static NSString* WineLocalizedString(unsigned int stringID)
                         }
                     }
                 }
-            }
-
-            /* Raw input reports device motion, so accumulate the deltas for both
-             * absolute and relative moves (see macdrv_mouse_moved()). */
-            {
-                double scale = retina_on ? 2 : 1;
-                rawMoveDeltaX += [anEvent deltaX] * scale;
-                rawMoveDeltaY += [anEvent deltaY] * scale;
             }
 
             if (absolute)
