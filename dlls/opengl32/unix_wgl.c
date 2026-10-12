@@ -25,6 +25,7 @@
 #include "config.h"
 
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 
@@ -1023,12 +1024,14 @@ static const GLubyte *override_vendor( GLenum name, const GLubyte *orig )
 
     if (name == GL_RENDERER)
     {
-        if (orig && (strstr((const char *)orig, "NVIDIA") || strstr((const char *)orig, "Intel"))) return (const GLubyte *)"AMD Radeon Graphics";
+        if (orig && (strstr((const char *)orig, "NVIDIA") || strstr((const char *)orig, "Intel") || strstr((const char *)orig, "Apple"))) return (const GLubyte *)"AMD Radeon Graphics";
         return orig;
     }
     if (name == GL_VENDOR)
     {
-        if (orig && (strstr((const char *)orig, "NVIDIA") || strstr((const char *)orig, "Intel"))) return (const GLubyte *)"AMD";
+        /* Apple: Godot 3 disables its depth prepass for "Apple" GPUs, which makes materials
+         * using the opaque prepass depth mode invisible (seen in Lingo). */
+        if (orig && (strstr((const char *)orig, "NVIDIA") || strstr((const char *)orig, "Intel") || strstr((const char *)orig, "Apple"))) return (const GLubyte *)"AMD";
         return orig;
     }
     return orig;
@@ -1866,11 +1869,66 @@ void wrap_glViewport( TEB *teb, GLint x, GLint y, GLsizei width, GLsizei height 
     funcs->p_glViewport( x, y, width, height );
 }
 
+/* Debugging aid: WINE_GL_CAPTURE=<unix dir> saves the back buffer as a PPM every
+ * WINE_GL_CAPTURE_INTERVAL presented frames (default 120), so rendering can be inspected
+ * without screen recording permissions. */
+static void capture_back_buffer( HDC hdc, const struct opengl_funcs *funcs )
+{
+    static const char *dir;
+    static int interval = -1;
+    static LONG frame;
+    GLint prev_read_fbo, prev_read_buffer, prev_pack_buffer, prev_alignment;
+    unsigned char *pixels;
+    char path[1024];
+    RECT rect;
+    HWND hwnd;
+    FILE *file;
+    int width, height, y;
+    LONG n;
+
+    if (interval < 0)
+    {
+        const char *env = getenv( "WINE_GL_CAPTURE_INTERVAL" );
+        dir = getenv( "WINE_GL_CAPTURE" );
+        interval = env ? max( atoi( env ), 1 ) : 120;
+    }
+    if (!dir) return;
+    n = InterlockedIncrement( &frame );
+    if (n % interval) return;
+    if (!(hwnd = NtUserWindowFromDC( hdc )) || !NtUserGetClientRect( hwnd, &rect, NtUserGetWinMonitorDpi( hwnd, MDT_WINE_RAW_DPI ) )) return;
+    if ((width = rect.right) <= 0 || (height = rect.bottom) <= 0) return;
+    if (!(pixels = malloc( width * height * 3 ))) return;
+
+    funcs->p_glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &prev_read_fbo );
+    funcs->p_glGetIntegerv( GL_READ_BUFFER, &prev_read_buffer );
+    funcs->p_glGetIntegerv( GL_PIXEL_PACK_BUFFER_BINDING, &prev_pack_buffer );
+    funcs->p_glGetIntegerv( GL_PACK_ALIGNMENT, &prev_alignment );
+    funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+    funcs->p_glReadBuffer( GL_BACK );
+    funcs->p_glBindBuffer( GL_PIXEL_PACK_BUFFER, 0 );
+    funcs->p_glPixelStorei( GL_PACK_ALIGNMENT, 1 );
+    funcs->p_glReadPixels( 0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels );
+    funcs->p_glPixelStorei( GL_PACK_ALIGNMENT, prev_alignment );
+    funcs->p_glBindBuffer( GL_PIXEL_PACK_BUFFER, prev_pack_buffer );
+    funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, prev_read_fbo );
+    funcs->p_glReadBuffer( prev_read_buffer );
+
+    snprintf( path, sizeof(path), "%s/frame-%d-%06d.ppm", dir, (int)getpid(), (int)n );
+    if ((file = fopen( path, "wb" )))
+    {
+        fprintf( file, "P6\n%d %d\n255\n", width, height );
+        for (y = height - 1; y >= 0; y--) fwrite( pixels + y * width * 3, 1, width * 3, file );
+        fclose( file );
+    }
+    free( pixels );
+}
+
 BOOL wrap_wglSwapBuffers( TEB *teb, HDC hdc )
 {
     const struct opengl_funcs *funcs = get_dc_funcs( hdc );
     BOOL ret;
 
+    if (get_current_context( teb, NULL, NULL )) capture_back_buffer( hdc, funcs );
     if (!(ret = funcs->p_wglSwapBuffers( hdc )))
     {
         /* default implementation: implicitly flush the context */
