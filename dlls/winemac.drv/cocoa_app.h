@@ -84,6 +84,7 @@ enum {
     BOOL        cursorIsCurrent;
     BOOL        cursorHidden;
     BOOL        clientWantsCursorHidden;
+    BOOL        relativeMouseMode;
 
     NSTimeInterval lastSetCursorPositionTime;
 

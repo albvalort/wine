@@ -1076,6 +1076,17 @@ static NSString* WineLocalizedString(unsigned int stringID)
         }
     }
 
+    - (void) updateRelativeMouseMode
+    {
+        BOOL relative = clientWantsCursorHidden && self.clippingCursor && [NSApp isActive];
+
+        if (relative == relativeMouseMode) return;
+        relativeMouseMode = relative;
+        CGAssociateMouseAndMouseCursorPosition(!relative);
+        mouseMoveDeltaX = mouseMoveDeltaY = 0;
+        rawMoveDeltaX = rawMoveDeltaY = 0;
+    }
+
     - (void) hideCursor
     {
         if (!clientWantsCursorHidden)
@@ -1083,6 +1094,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
             clientWantsCursorHidden = TRUE;
             [self updateCursor:TRUE];
         }
+        [self updateRelativeMouseMode];
     }
 
     - (void) unhideCursor
@@ -1092,6 +1104,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
             clientWantsCursorHidden = FALSE;
             [self updateCursor:FALSE];
         }
+        [self updateRelativeMouseMode];
     }
 
     - (void) setCursor:(NSCursor*)newCursor
@@ -1263,6 +1276,12 @@ static NSString* WineLocalizedString(unsigned int stringID)
     {
         BOOL ret;
 
+        /* In relative mouse mode the hidden cursor is detached from the mouse, so
+         * there is nothing to warp. Games recentering the cursor after every
+         * move (Godot 3) would otherwise get the warp back as motion. */
+        if (relativeMouseMode)
+            return TRUE;
+
         if ([windowsBeingDragged count])
             ret = FALSE;
         else if (self.clippingCursor && [clipCursorHandler respondsToSelector:@selector(setCursorPosition:)])
@@ -1344,6 +1363,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
         [self setCursorPosition:NSPointToCGPoint([self flippedMouseLocation:[NSEvent mouseLocation]])];
 
         [self updateWindowsForCursorClipping];
+        [self updateRelativeMouseMode];
 
         return TRUE;
     }
@@ -1359,6 +1379,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
         lastSetCursorPositionTime = [[NSProcessInfo processInfo] systemUptime];
 
         [self updateWindowsForCursorClipping];
+        [self updateRelativeMouseMode];
 
         return TRUE;
     }
@@ -1475,16 +1496,6 @@ static NSString* WineLocalizedString(unsigned int stringID)
             macdrv_event* event;
             BOOL absolute;
 
-            /* Raw input reports device motion, so accumulate the deltas of every
-             * move, including those discarded below after a warp: games that
-             * recenter the cursor on each WM_INPUT (Godot 3) would otherwise lose
-             * most of the motion (see macdrv_mouse_moved()). */
-            {
-                double scale = retina_on ? 2 : 1;
-                rawMoveDeltaX += [anEvent deltaX] * scale;
-                rawMoveDeltaY += [anEvent deltaY] * scale;
-            }
-
             // If we recently warped the cursor (other than in our cursor-clipping
             // event tap), discard mouse move events until we see an event which is
             // later than that time.
@@ -1497,7 +1508,21 @@ static NSString* WineLocalizedString(unsigned int stringID)
                 forceNextMouseMoveAbsolute = TRUE;
             }
 
-            if (forceNextMouseMoveAbsolute || targetWindow != lastTargetWindow)
+            /* Raw input reports device motion (see macdrv_mouse_moved()). */
+            {
+                double scale = retina_on ? 2 : 1;
+                rawMoveDeltaX += [anEvent deltaX] * scale;
+                rawMoveDeltaY += [anEvent deltaY] * scale;
+            }
+
+            if (relativeMouseMode)
+            {
+                /* The cursor is hidden, clipped and detached from the mouse:
+                 * only motion matters. */
+                absolute = FALSE;
+                forceNextMouseMoveAbsolute = FALSE;
+            }
+            else if (forceNextMouseMoveAbsolute || targetWindow != lastTargetWindow)
             {
                 absolute = TRUE;
                 forceNextMouseMoveAbsolute = FALSE;
@@ -2450,6 +2475,8 @@ static NSString* WineLocalizedString(unsigned int stringID)
         NSNumber* displayID;
         NSDictionary* modesToRealize = [latentDisplayModes autorelease];
 
+        [self updateRelativeMouseMode];
+
         latentDisplayModes = [[NSMutableDictionary alloc] init];
         for (displayID in modesToRealize)
         {
@@ -2500,6 +2527,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
         WineEventQueue* queue;
 
         [self invalidateGotFocusEvents];
+        [self updateRelativeMouseMode];
 
         if (!temporarilyIgnoreResignEventsForDialog)
         {
