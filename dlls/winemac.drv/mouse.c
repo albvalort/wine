@@ -127,7 +127,7 @@ static const CFStringRef cocoa_cursor_names[] =
  * Update the various window states on a mouse event.
  */
 static void send_mouse_input(HWND hwnd, macdrv_window cocoa_window, UINT flags, int x, int y,
-                             DWORD mouse_data, BOOL drag, unsigned long time)
+                             DWORD mouse_data, BOOL drag, unsigned long time, UINT send_flags)
 {
     INPUT input;
     HWND top_level_hwnd;
@@ -158,7 +158,7 @@ static void send_mouse_input(HWND hwnd, macdrv_window cocoa_window, UINT flags, 
     input.mi.time           = time;
     input.mi.dwExtraInfo    = 0;
 
-    NtUserSendHardwareInput(top_level_hwnd, 0, &input, 0);
+    NtUserSendHardwareInput(top_level_hwnd, send_flags, &input, 0);
 }
 
 
@@ -892,7 +892,7 @@ void macdrv_mouse_button(HWND hwnd, const macdrv_event *event)
 
     send_mouse_input(hwnd, event->window, flags | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
                      event->mouse_button.x, event->mouse_button.y,
-                     data, FALSE, event->mouse_button.time_ms);
+                     data, FALSE, event->mouse_button.time_ms, 0);
 }
 
 
@@ -910,11 +910,22 @@ void macdrv_mouse_moved(HWND hwnd, const macdrv_event *event)
           event->mouse_moved.x, event->mouse_moved.y, event->mouse_moved.drag,
           event->mouse_moved.time_ms, (NtGetTickCount() - event->mouse_moved.time_ms));
 
-    if (event->type == MOUSE_MOVED_ABSOLUTE)
-        flags |= MOUSEEVENTF_ABSOLUTE;
+    if (event->type == MOUSE_MOVED_RELATIVE)
+    {
+        send_mouse_input(hwnd, event->window, flags, event->mouse_moved.x, event->mouse_moved.y,
+                         0, event->mouse_moved.drag, event->mouse_moved.time_ms, 0);
+        return;
+    }
 
-    send_mouse_input(hwnd, event->window, flags, event->mouse_moved.x, event->mouse_moved.y,
-                     0, event->mouse_moved.drag, event->mouse_moved.time_ms);
+    /* Raw input must report relative device motion, as on Windows: games that read WM_INPUT
+     * (e.g. first-person cameras) get nothing usable from absolute desktop positions. */
+    send_mouse_input(hwnd, event->window, flags | MOUSEEVENTF_ABSOLUTE, event->mouse_moved.x,
+                     event->mouse_moved.y, 0, event->mouse_moved.drag, event->mouse_moved.time_ms,
+                     SEND_HWMSG_NO_RAW);
+    if (event->mouse_moved.raw_dx || event->mouse_moved.raw_dy)
+        send_mouse_input(hwnd, event->window, flags, event->mouse_moved.raw_dx,
+                         event->mouse_moved.raw_dy, 0, event->mouse_moved.drag,
+                         event->mouse_moved.time_ms, SEND_HWMSG_NO_MSG);
 }
 
 
@@ -933,11 +944,11 @@ void macdrv_mouse_scroll(HWND hwnd, const macdrv_event *event)
     if (event->mouse_scroll.y_scroll)
         send_mouse_input(hwnd, event->window, MOUSEEVENTF_WHEEL | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
                          event->mouse_scroll.x, event->mouse_scroll.y,
-                         event->mouse_scroll.y_scroll, FALSE, event->mouse_scroll.time_ms);
+                         event->mouse_scroll.y_scroll, FALSE, event->mouse_scroll.time_ms, 0);
     if (event->mouse_scroll.x_scroll)
         send_mouse_input(hwnd, event->window, MOUSEEVENTF_HWHEEL | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
                          event->mouse_scroll.x, event->mouse_scroll.y,
-                         event->mouse_scroll.x_scroll, FALSE, event->mouse_scroll.time_ms);
+                         event->mouse_scroll.x_scroll, FALSE, event->mouse_scroll.time_ms, 0);
 }
 
 

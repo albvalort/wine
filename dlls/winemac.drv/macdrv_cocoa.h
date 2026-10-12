@@ -392,6 +392,8 @@ typedef struct macdrv_event {
         struct {
             int             x;
             int             y;
+            int             raw_dx;
+            int             raw_dy;
             bool            drag;
             unsigned long   time_ms;
         }                                           mouse_moved;

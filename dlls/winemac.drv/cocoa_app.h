@@ -65,6 +65,7 @@ enum {
     WineWindow* mouseCaptureWindow;
     BOOL forceNextMouseMoveAbsolute;
     double mouseMoveDeltaX, mouseMoveDeltaY;
+    double rawMoveDeltaX, rawMoveDeltaY;
     NSUInteger unmatchedMouseDowns;
 
     NSTimeInterval lastScrollTime;

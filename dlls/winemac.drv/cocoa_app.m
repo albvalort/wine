@@ -1539,6 +1539,14 @@ static NSString* WineLocalizedString(unsigned int stringID)
                 }
             }
 
+            /* Raw input reports device motion, so accumulate the deltas for both
+             * absolute and relative moves (see macdrv_mouse_moved()). */
+            {
+                double scale = retina_on ? 2 : 1;
+                rawMoveDeltaX += [anEvent deltaX] * scale;
+                rawMoveDeltaY += [anEvent deltaY] * scale;
+            }
+
             if (absolute)
             {
                 if (self.clippingCursor)
@@ -1569,6 +1577,11 @@ static NSString* WineLocalizedString(unsigned int stringID)
                 mouseMoveDeltaX -= event->mouse_moved.x / scale;
                 mouseMoveDeltaY -= event->mouse_moved.y / scale;
             }
+
+            event->mouse_moved.raw_dx = rawMoveDeltaX;
+            event->mouse_moved.raw_dy = rawMoveDeltaY;
+            rawMoveDeltaX -= event->mouse_moved.raw_dx;
+            rawMoveDeltaY -= event->mouse_moved.raw_dy;
 
             if (event->type == MOUSE_MOVED_ABSOLUTE || event->mouse_moved.x || event->mouse_moved.y)
             {
